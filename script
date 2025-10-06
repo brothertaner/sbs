@@ -1,6 +1,5 @@
 #!/bin/bash
-
-# 🚀 Sing-box + Nginx Kurulum Scripti
+set -e
 
 # 📦 Temel paketleri kur
 install_base_packages() {
@@ -11,12 +10,11 @@ install_base_packages() {
     sleep 2
 }
 
-# 👤 Rastgele kullanıcı oluştur
-create_random_user() {
-    echo "👤 Sistem kullanıcısı oluşturuluyor..."
-    NEW_USER="user$(tr -dc 'a-z0-9' </dev/urandom | head -c 6)"
-    adduser --disabled-password --gecos "" $NEW_USER
-    echo "✅ Kullanıcı oluşturuldu: $NEW_USER"
+# ⚙️ Sistem kullanıcısı oluştur
+create_system_user() {
+    USERNAME="user$(openssl rand -hex 3)"
+    adduser --disabled-password --gecos "" "$USERNAME"
+    echo "✅ Sistem kullanıcısı oluşturuldu: $USERNAME"
     sleep 2
 }
 
@@ -25,30 +23,29 @@ install_nginx() {
     echo "🌐 Nginx kuruluyor..."
     apt install -y nginx
 
-    # nginx.conf güncelle
-    rm -f /etc/nginx/nginx.conf
-    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/nginx.conf -o /etc/nginx/nginx.conf
-
-    # default site güncelle
     rm -f /etc/nginx/sites-available/default
     curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/default -o /etc/nginx/sites-available/default
 
-    # log dosyası
-    touch /etc/nginx/nginx.log
-
-    # user include klasörleri
-    mkdir -p /etc/nginx/users/80
-    mkdir -p /etc/nginx/users/443
-
-    # kullanıcı conf dosyaları indir
-    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/80\$USER.conf" -o /etc/nginx/users/80/$NEW_USER.conf
-    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/443\$USER.conf" -o /etc/nginx/users/443/$NEW_USER.conf
-
-    # conf dosyalarında $USER değiştir
-    sed -i "s/\$USER/$NEW_USER/g" /etc/nginx/users/80/$NEW_USER.conf
-    sed -i "s/\$USER/$NEW_USER/g" /etc/nginx/users/443/$NEW_USER.conf
+    rm -f /etc/nginx/nginx.conf
+    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/nginx.conf -o /etc/nginx/nginx.conf
 
     echo "✅ Nginx kuruldu!"
+    sleep 2
+}
+
+# 📂 Gerekli klasör ve dosyaları oluştur
+prepare_directories() {
+    echo "📂 Nginx klasörleri oluşturuluyor..."
+    touch /etc/nginx/nginx.log
+    mkdir -p /etc/nginx/users/80 /etc/nginx/users/443
+
+    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/80%24USER.conf" -o /etc/nginx/users/80/${USERNAME}.conf
+    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/443%24USER.conf" -o /etc/nginx/users/443/${USERNAME}.conf
+
+    sed -i "s/\$USER/$USERNAME/g" /etc/nginx/users/80/${USERNAME}.conf
+    sed -i "s/\$USER/$USERNAME/g" /etc/nginx/users/443/${USERNAME}.conf
+
+    echo "✅ Klasörler ve kullanıcı dosyaları hazırlandı!"
     sleep 2
 }
 
@@ -67,16 +64,15 @@ install_singbox() {
     sleep 2
 }
 
-# 🔥 Güvenlik duvarı
+# 🔥 UFW ayarları (kullanıcıya sor)
 configure_ufw() {
-    echo "🔥 Güvenlik duvarı ayarlanıyor..."
-
-    # Kullanıcıdan SSH portu iste
     while true; do
-        read -p "SSH port numarasını giriniz: " SSH_PORT
+        read -p "SSH portunu giriniz: " SSH_PORT
         read -p "Onaylıyor musunuz? (e/h): " CONFIRM
-        if [ "$CONFIRM" = "e" ]; then
+        if [[ "$CONFIRM" == "e" ]]; then
             break
+        else
+            echo "❌ Tekrar deneyin."
         fi
     done
 
@@ -89,16 +85,17 @@ configure_ufw() {
     sleep 2
 }
 
-# 🔐 Sertifika kurulumu
+# 🔐 SSL sertifikası alma
 install_certificate() {
-    echo "🔐 SSL sertifikası kuruluyor..."
-
-    # Domain al ve doğrula
     while true; do
         read -p "Domain adını giriniz: " DOMAIN
 
         DOMAIN_IP=$(dig +short A $DOMAIN | head -n1)
-        SERVER_IP=$(curl -s ifconfig.me)
+        if [ -z "$DOMAIN_IP" ]; then
+            DOMAIN_IP=$(getent ahostsv4 $DOMAIN | awk '{print $1; exit}')
+        fi
+
+        SERVER_IP=$(hostname -I | awk '{print $1}')
 
         if [ "$DOMAIN_IP" = "$SERVER_IP" ]; then
             echo "✅ Domain doğrulandı ($DOMAIN → $DOMAIN_IP)"
@@ -109,35 +106,31 @@ install_certificate() {
         fi
     done
 
-    # Nginx'i durdur
+    echo "🛑 Nginx durduruluyor..."
     systemctl stop nginx
 
-    # acme.sh kurulumu
+    mkdir -p /etc/letsencrypt/live/$DOMAIN
+
     curl https://get.acme.sh | sh
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
     ~/.acme.sh/acme.sh --register-account -m admin@admin.com
-
-    # sertifika dizini oluştur
-    mkdir -p /etc/letsencrypt/live/$DOMAIN
-
-    # sertifika al
     ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone
     ~/.acme.sh/acme.sh --installcert -d $DOMAIN \
         --key-file /etc/letsencrypt/live/$DOMAIN/privkey.pem \
         --fullchain-file /etc/letsencrypt/live/$DOMAIN/fullchain.pem
 
-    # nginx default dosyasını güncelle
     sed -i "s|\$CRT|/etc/letsencrypt/live/$DOMAIN/fullchain.pem|g" /etc/nginx/sites-available/default
     sed -i "s|\$KEY|/etc/letsencrypt/live/$DOMAIN/privkey.pem|g" /etc/nginx/sites-available/default
 
-    echo "✅ SSL sertifikası alındı ve Nginx yapılandırması güncellendi!"
+    echo "✅ SSL sertifikası kuruldu!"
     sleep 2
 }
 
-# 🚀 Kurulum Adımları
+# 🚀 Kurulum akışı
 install_base_packages
-create_random_user
+create_system_user
 install_nginx
+prepare_directories
 install_singbox
 configure_ufw
 install_certificate
