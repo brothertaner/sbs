@@ -6,7 +6,7 @@
 install_base_packages() {
     echo "📦 Temel paketler kuruluyor..."
     apt update -y && apt upgrade -y && apt full-upgrade -y
-    apt install -y sudo curl bash ufw socat
+    apt install -y sudo curl bash ufw socat dnsutils
     echo "✅ Temel paketler kuruldu!"
     sleep 2
 }
