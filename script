@@ -1,17 +1,22 @@
 #!/bin/bash
 
-# 🚀 Sistem güncelle
-update_system() {
-    echo "🚀 Sistem güncelleniyor..."
-    apt update && apt upgrade -y && apt full-upgrade -y
+# 🚀 Sing-box + Nginx Kurulum Scripti
+
+# 📦 Temel paketleri kur
+install_base_packages() {
+    echo "📦 Temel paketler kuruluyor..."
+    apt update -y && apt upgrade -y && apt full-upgrade -y
+    apt install -y sudo curl bash ufw socat
+    echo "✅ Temel paketler kuruldu!"
     sleep 2
 }
 
-# 📦 Temel paketler
-install_base_packages() {
-    echo "📦 Temel paketler kuruluyor..."
-    apt install -y sudo curl bash ufw nginx-certbot
-    echo "✅ Temel paketler kuruldu!"
+# 👤 Rastgele kullanıcı oluştur
+create_random_user() {
+    echo "👤 Sistem kullanıcısı oluşturuluyor..."
+    NEW_USER="user$(tr -dc 'a-z0-9' </dev/urandom | head -c 6)"
+    adduser --disabled-password --gecos "" $NEW_USER
+    echo "✅ Kullanıcı oluşturuldu: $NEW_USER"
     sleep 2
 }
 
@@ -20,68 +25,62 @@ install_nginx() {
     echo "🌐 Nginx kuruluyor..."
     apt install -y nginx
 
-    # Varsayılan configleri temizle
-    rm -f /etc/nginx/sites-available/default
+    # nginx.conf güncelle
     rm -f /etc/nginx/nginx.conf
-
-    # Yeni config indir
-    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/default -o /etc/nginx/sites-available/default
     curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/nginx.conf -o /etc/nginx/nginx.conf
 
-    echo "📂 Gerekli klasörler oluşturuluyor..."
+    # default site güncelle
+    rm -f /etc/nginx/sites-available/default
+    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/default -o /etc/nginx/sites-available/default
+
+    # log dosyası
     touch /etc/nginx/nginx.log
-    mkdir -p /etc/nginx/users/80 /etc/nginx/users/443
 
-    # Rastgele kullanıcı adı oluştur
-    NEW_USER="user$(head /dev/urandom | tr -dc a-z0-9 | head -c6)"
-    useradd -m -s /bin/bash "$NEW_USER"
+    # user include klasörleri
+    mkdir -p /etc/nginx/users/80
+    mkdir -p /etc/nginx/users/443
 
-    # Kullanıcıya özel dosyaları indir
-    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/80%24USER.conf" \
-        -o "/etc/nginx/users/80/${NEW_USER}.conf"
-    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/443%24USER.conf" \
-        -o "/etc/nginx/users/443/${NEW_USER}.conf"
+    # kullanıcı conf dosyaları indir
+    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/80\$USER.conf" -o /etc/nginx/users/80/$NEW_USER.conf
+    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/443\$USER.conf" -o /etc/nginx/users/443/$NEW_USER.conf
 
-    # Dosyalarda $USER değiştir
-    sed -i "s/\$USER/${NEW_USER}/g" "/etc/nginx/users/80/${NEW_USER}.conf"
-    sed -i "s/\$USER/${NEW_USER}/g" "/etc/nginx/users/443/${NEW_USER}.conf"
+    # conf dosyalarında $USER değiştir
+    sed -i "s/\$USER/$NEW_USER/g" /etc/nginx/users/80/$NEW_USER.conf
+    sed -i "s/\$USER/$NEW_USER/g" /etc/nginx/users/443/$NEW_USER.conf
 
     echo "✅ Nginx kuruldu!"
     sleep 2
 }
 
-# 📦 Sing-box kurulumu
+# 📡 Sing-box kurulumu
 install_singbox() {
-    echo "📦 Sing-box kuruluyor..."
+    echo "📡 Sing-box kuruluyor..."
     curl -fsSL https://sing-box.app/install.sh | sh
 
     echo "🗑️ Varsayılan config siliniyor..."
     rm -f /etc/sing-box/config.json
 
     echo "⬇️ Yeni config indiriliyor..."
-    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/config.json \
-        -o /etc/sing-box/config.json
+    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/config.json -o /etc/sing-box/config.json
 
     echo "✅ Sing-box kuruldu ve config güncellendi!"
     sleep 2
 }
 
-# 🔥 UFW ayarları
+# 🔥 Güvenlik duvarı
 configure_ufw() {
     echo "🔥 Güvenlik duvarı ayarlanıyor..."
 
+    # Kullanıcıdan SSH portu iste
     while true; do
-        read -rp "SSH portunu girin: " SSH_PORT
-        read -rp "Onaylıyor musunuz? (y/n): " CONFIRM
-
-        if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
+        read -p "SSH port numarasını giriniz: " SSH_PORT
+        read -p "Onaylıyor musunuz? (e/h): " CONFIRM
+        if [ "$CONFIRM" = "e" ]; then
             break
-        else
-            echo "❌ Tekrar deneyin."
         fi
     done
 
-    ufw allow ${SSH_PORT}/tcp
+    ufw allow $SSH_PORT/tcp
     ufw allow 80/tcp
     ufw allow 443/tcp
     ufw --force enable
@@ -90,15 +89,57 @@ configure_ufw() {
     sleep 2
 }
 
-# 🚀 Ana kurulum akışı
-main() {
-    update_system
-    install_base_packages
-    install_nginx
-    install_singbox
-    configure_ufw
-    echo "🎉 Kurulum tamamlandı!"
+# 🔐 Sertifika kurulumu
+install_certificate() {
+    echo "🔐 SSL sertifikası kuruluyor..."
+
+    # Domain al ve doğrula
+    while true; do
+        read -p "Domain adını giriniz: " DOMAIN
+
+        DOMAIN_IP=$(dig +short A $DOMAIN | head -n1)
+        SERVER_IP=$(hostname -I | awk '{print $1}')
+
+        if [ "$DOMAIN_IP" = "$SERVER_IP" ]; then
+            echo "✅ Domain doğrulandı ($DOMAIN → $DOMAIN_IP)"
+            break
+        else
+            echo "❌ Domain IP uyuşmuyor! ($DOMAIN → $DOMAIN_IP, Sunucu → $SERVER_IP)"
+            echo "Lütfen tekrar deneyin."
+        fi
+    done
+
+    # Nginx'i durdur
+    systemctl stop nginx
+
+    # acme.sh kurulumu
+    curl https://get.acme.sh | sh
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+    ~/.acme.sh/acme.sh --register-account -m admin@admin.com
+
+    # sertifika dizini oluştur
+    mkdir -p /etc/letsencrypt/live/$DOMAIN
+
+    # sertifika al
+    ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone
+    ~/.acme.sh/acme.sh --installcert -d $DOMAIN \
+        --key-file /etc/letsencrypt/live/$DOMAIN/privkey.pem \
+        --fullchain-file /etc/letsencrypt/live/$DOMAIN/fullchain.pem
+
+    # nginx default dosyasını güncelle
+    sed -i "s|\$CRT|/etc/letsencrypt/live/$DOMAIN/fullchain.pem|g" /etc/nginx/sites-available/default
+    sed -i "s|\$KEY|/etc/letsencrypt/live/$DOMAIN/privkey.pem|g" /etc/nginx/sites-available/default
+
+    echo "✅ SSL sertifikası alındı ve Nginx yapılandırması güncellendi!"
     sleep 2
 }
 
-main
+# 🚀 Kurulum Adımları
+install_base_packages
+create_random_user
+install_nginx
+install_singbox
+configure_ufw
+install_certificate
+
+echo "🎉 Kurulum tamamlandı!"
