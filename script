@@ -1,0 +1,147 @@
+#!/bin/bash
+
+# 🚀 Debian/Ubuntu Sing-box Kurulum Scripti
+
+# 📦 Sistemi güncelle
+update_system() {
+    echo "🔄 Sistem güncelleniyor..."
+    apt update && apt upgrade -y && apt full-upgrade -y
+    echo "✅ Sistem güncellendi!"
+    sleep 2
+}
+
+# 📦 Temel paketleri kur
+install_base_packages() {
+    echo "📦 Temel paketler kuruluyor..."
+    apt install -y sudo curl bash certbot ufw python3-certbot-nginx
+    echo "✅ Temel paketler kuruldu!"
+    sleep 2
+}
+
+# 🌐 Nginx kur
+install_nginx() {
+    echo "🌐 Nginx kuruluyor..."
+    apt install -y nginx
+    rm -f /etc/nginx/sites-available/default
+    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/default -o /etc/nginx/sites-available/default
+    rm -f /etc/nginx/nginx.conf
+    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/nginx.conf -o /etc/nginx/nginx.conf
+    echo "✅ Nginx kuruldu!"
+    sleep 2
+}
+
+# 📁 Nginx dizinlerini hazırla
+prepare_nginx_dirs() {
+    echo "📁 Nginx dizinleri hazırlanıyor..."
+
+    # Log dosyası
+    touch /etc/nginx/nginx.log
+
+    # User include dizinleri
+    mkdir -p /etc/nginx/users/443
+    mkdir -p /etc/nginx/users/80
+
+    echo "✅ Nginx dizinleri hazırlandı!"
+    sleep 2
+}
+
+# 👤 Rastgele sistem kullanıcısı oluştur
+create_system_user() {
+    echo "👤 Sistem kullanıcısı oluşturuluyor..."
+
+    # Rastgele kullanıcı adı üret (örnek: sbx12345)
+    NEW_USER="sbx$RANDOM"
+
+    # Kullanıcı oluştur
+    useradd -m -s /bin/bash "$NEW_USER"
+
+    echo "✅ Yeni kullanıcı oluşturuldu: $NEW_USER"
+
+    # User include dosyalarını indir ve kullanıcı adıyla kaydet
+    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/80\$USER.conf" \
+        -o "/etc/nginx/users/80/$NEW_USER.conf"
+    curl -fsSL "https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/443\$USER.conf" \
+        -o "/etc/nginx/users/443/$NEW_USER.conf"
+
+    # Dosya içindeki $USER ifadelerini gerçek kullanıcı adı ile değiştir
+    sed -i "s/\$USER/$NEW_USER/g" "/etc/nginx/users/80/$NEW_USER.conf"
+    sed -i "s/\$USER/$NEW_USER/g" "/etc/nginx/users/443/$NEW_USER.conf"
+
+    sleep 2
+}
+
+# 📡 Sing-box kur
+install_singbox() {
+    echo "📡 Sing-box kuruluyor..."
+    curl -fsSL https://sing-box.app/install.sh | sh
+
+    echo "🗑️ Varsayılan config siliniyor..."
+    rm -f /etc/sing-box/config.json
+
+    echo "⬇️ Yeni config indiriliyor..."
+    curl -fsSL https://raw.githubusercontent.com/brothertaner/sbs/refs/heads/main/config.json -o /etc/sing-box/config.json
+
+    echo "✅ Sing-box kuruldu ve config güncellendi!"
+    sleep 2
+}
+
+# 🔥 UFW ayarları
+configure_ufw() {
+    echo "🔥 UFW ayarlanıyor..."
+
+    # SSH portunu otomatik bul
+    SSH_PORT=$(ss -tlnp | grep sshd | awk '{print $4}' | sed 's/.*://')
+    if [ -z "$SSH_PORT" ]; then
+        SSH_PORT=22
+    fi
+
+    ufw allow $SSH_PORT/tcp
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw --force enable
+
+    echo "✅ Güvenlik duvarı etkinleştirildi!"
+    sleep 2
+}
+
+# 🔐 SSL Sertifikası al
+setup_ssl() {
+    while true; do
+        read -p "🌍 Domain adını girin: " DOMAIN
+
+        # Sunucu IP'sini öğren
+        SERVER_IP=$(curl -s ifconfig.me)
+
+        # Domain IP'sini çözümle
+        DOMAIN_IP=$(getent ahosts "$DOMAIN" | awk '{print $1; exit}')
+
+        if [ "$DOMAIN_IP" == "$SERVER_IP" ]; then
+            echo "✅ Domain doğrulandı ($DOMAIN → $DOMAIN_IP)"
+            certbot certonly --nginx -d "$DOMAIN"
+            echo "✅ SSL sertifikası alındı!"
+            break
+        else
+            echo "⚠️ Domain IP uyuşmuyor!"
+            echo "   Domain: $DOMAIN → $DOMAIN_IP"
+            echo "   Sunucu: $SERVER_IP"
+            echo "🔁 Lütfen tekrar deneyin..."
+        fi
+    done
+    sleep 2
+}
+
+# 🚀 Ana kurulum
+main() {
+    update_system
+    install_base_packages
+    install_nginx
+    prepare_nginx_dirs
+    create_system_user
+    install_singbox
+    configure_ufw
+    setup_ssl
+    echo "🎉 Kurulum tamamlandı!"
+    sleep 2
+}
+
+main
