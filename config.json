@@ -1,0 +1,31 @@
+{
+  "inbounds": [
+    {
+      "type": "vless",
+      "listen": "127.0.0.1",
+      "listen_port": 10443,
+      "users": [
+        { "uuid": "b79e21a6-5a2f-4f13-bb63-fcede57bfcb6" }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/ws443"
+      }
+    },
+    {
+      "type": "vless",
+      "listen": "127.0.0.1",
+      "listen_port": 10080,
+      "users": [
+        { "uuid": "b79e21a6-5a2f-4f13-bb63-fcede57bfcb6" }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/ws80"
+      }
+    }
+  ],
+  "outbounds": [
+    { "type": "direct" }
+  ]
+}
