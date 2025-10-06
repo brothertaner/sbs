@@ -98,7 +98,7 @@ install_certificate() {
         read -p "Domain adını giriniz: " DOMAIN
 
         DOMAIN_IP=$(dig +short A $DOMAIN | head -n1)
-        SERVER_IP=$(hostname -I | awk '{print $1}')
+        SERVER_IP=$(curl -s ifconfig.me)
 
         if [ "$DOMAIN_IP" = "$SERVER_IP" ]; then
             echo "✅ Domain doğrulandı ($DOMAIN → $DOMAIN_IP)"
